@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 
-from DataHandler.features import (
+from data_handler.features import (
     Binary,
     Categorical,
     Contiguous,
     Feature,
-    Mixed,
     Monotonicity,
+    make_feature,
 )
-from DataHandler.types import CategValue, DataLike, FeatureID, OneDimData
+from data_handler.types import CategValue, DataLike, FeatureID, OneDimData
 
 
 class DataHandler:
@@ -27,6 +25,18 @@ class DataHandler:
 
     def __init__(
         self,
+        features: list[Feature],
+        target: Feature | None,
+        causal_inc: list[tuple[Feature, Feature]],
+        greater_than: list[tuple[Feature, Feature]],
+    ):
+        self.__input_features = features
+        self.__target_feature = target
+        self.__causal_inc = causal_inc
+        self.__greater_than = greater_than
+
+    @classmethod
+    def from_data(
         X: DataLike,
         y: OneDimData | None = None,
         # trunk-ignore(ruff/B006)
@@ -47,11 +57,11 @@ class DataHandler:
         # trunk-ignore(ruff/B006)
         greater_than: list[tuple[FeatureID, FeatureID]] = [],
         regression: bool = False,
-        feature_names: Optional[list[str]] = None,
-        target_name: Optional[str] = None,
-    ):
+        feature_names: list[str] | None = None,
+        target_name: str | None = None,
+    ) -> DataHandler:
         """
-                Initialize a DataHandler instance.
+                Construct a DataHandler instance.
 
         Parameters:
         -----------
@@ -88,15 +98,15 @@ class DataHandler:
                     target_name = "target"
 
             if regression:
-                self.__target_feature = Contiguous(y, target_name)
+                target_feature = Contiguous(y, target_name)
             else:
                 if len(np.unique(y)) > 2:
-                    self.__target_feature = Categorical(y, name=target_name)
+                    target_feature = Categorical(y, name=target_name)
                 else:
-                    self.__target_feature = Binary(y, name=target_name)
+                    target_feature = Binary(y, name=target_name)
                     # TODO make the target values specifiable
         else:
-            self.__target_feature = None
+            target_feature = None
 
         n_features = X.shape[1]
         if feature_names is None:
@@ -104,11 +114,11 @@ class DataHandler:
         if len(feature_names) != n_features:
             raise ValueError("Incorrect length of list of feature names.")
 
-        self.__input_features: list[Feature] = []
+        input_features: list[Feature] = []
         # stores lists of categorical values of applicable features, used for mapping to integer values
         for feat_i, feat_name in enumerate(feature_names):
-            self.__input_features.append(
-                self.__make_feature(
+            input_features.append(
+                make_feature(
                     X[:, feat_i],
                     feat_name,
                     categ_map.get(feat_name, None),
@@ -120,20 +130,21 @@ class DataHandler:
                 )
             )
 
-        self.__causal_inc = [
+        causal_inc = [
             (
-                self.__input_features[self.feature_names.index(i)],
-                self.__input_features[self.feature_names.index(j)],
+                input_features[feature_names.index(i)],
+                input_features[feature_names.index(j)],
             )
             for i, j in causal_inc
         ]
-        self.__greater_than = [
+        greater_than = [
             (
-                self.__input_features[self.feature_names.index(i)],
-                self.__input_features[self.feature_names.index(j)],
+                input_features[feature_names.index(i)],
+                input_features[feature_names.index(j)],
             )
             for i, j in greater_than
         ]
+        return DataHandler(input_features, target_feature, causal_inc, greater_than)
 
     @property
     def causal_inc(self) -> list[tuple[Feature, Feature]]:
@@ -142,66 +153,6 @@ class DataHandler:
     @property
     def greater_than(self) -> list[tuple[Feature, Feature]]:
         return self.__greater_than
-
-    def __make_feature(
-        self,
-        data: OneDimData,
-        feat_name: Optional[str],
-        categ_vals: Optional[list[CategValue]],
-        real_bounds: Optional[list[CategValue]],
-        ordered: bool,
-        discrete: bool,
-        monotone: bool,
-        modifiable: bool,
-    ) -> Feature:
-        if categ_vals is None:
-            return Contiguous(
-                data,
-                feat_name,
-                bounds=real_bounds,
-                discrete=discrete,
-                monotone=monotone,
-                modifiable=modifiable,
-            )
-        else:
-            if len(categ_vals) > 0:  # if predefined mapping exists
-                if np.any(~np.isin(data, categ_vals)):
-                    # if there are non-categorical values
-                    return Mixed(
-                        data,
-                        categ_vals,
-                        name=feat_name,
-                        bounds=real_bounds,
-                        monotone=monotone,
-                        modifiable=modifiable,
-                    )
-                elif len(categ_vals) > 2:
-                    return Categorical(
-                        data,
-                        categ_vals,
-                        name=feat_name,
-                        monotone=monotone,
-                        modifiable=modifiable,
-                        ordering=categ_vals if ordered else None,
-                    )
-                else:
-                    return Binary(
-                        data,
-                        categ_vals,
-                        name=feat_name,
-                        monotone=monotone,
-                        modifiable=modifiable,
-                    )
-            else:
-                # fully categorical without pre-specified valuess
-                if len(np.unique(data)) > 2:
-                    return Categorical(
-                        data, name=feat_name, monotone=monotone, modifiable=modifiable
-                    )
-                else:
-                    return Binary(
-                        data, name=feat_name, monotone=monotone, modifiable=modifiable
-                    )
 
     @property
     def n_features(self) -> int:
